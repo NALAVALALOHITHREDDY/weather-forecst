@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>7-Day Weather Forecast</title>
+  <style>
+    :root{
+      --bg:#0f1724; --card:#0b1320; --accent:#0ea5a4; --muted:#94a3b8; --glass: rgba(255,255,255,0.03);
+      --card-radius:16px; --gap:16px; font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;background:linear-gradient(180deg,#071029 0%, #091827 100%);color:#e6eef6;padding:28px;display:flex;align-items:flex-start;justify-content:center}
+    .app{width:100%;max-width:980px}
+    header{display:flex;align-items:center;gap:16px;margin-bottom:20px}
+    h1{font-size:20px;margin:0}
+    .controls{margin-left:auto;display:flex;gap:8px}
+    input[type=text]{background:var(--glass);border:1px solid rgba(255,255,255,0.04);padding:10px 12px;border-radius:10px;color:inherit;min-width:220px}
+    button{background:var(--accent);border:none;padding:10px 14px;border-radius:10px;color:#022;cursor:pointer}
+    button.secondary{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--muted)}
+
+    .meta{display:flex;gap:12px;align-items:center;margin-bottom:18px}
+    .cards{display:grid;grid-template-columns:repeat(auto-fit, minmax(140px,1fr));gap:var(--gap)}
+    .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));padding:12px;border-radius:var(--card-radius);backdrop-filter: blur(6px);border:1px solid rgba(255,255,255,0.03);display:flex;flex-direction:column;gap:8px;align-items:center}
+    .date{font-weight:600;font-size:14px}
+    .temp{font-size:20px;font-weight:700}
+    .desc{font-size:13px;color:var(--muted)}
+    .icon{width:64px;height:64px;display:flex;align-items:center;justify-content:center}
+
+    .footer{margin-top:14px;color:var(--muted);font-size:13px}
+    .small{font-size:13px;color:var(--muted)}
+    .loader{width:28px;height:28px;border-radius:50%;border:3px solid rgba(255,255,255,0.06);border-left-color:var(--accent);animation:spin 1s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    /* responsive tweaks */
+    @media (max-width:420px){h1{font-size:16px}.icon{width:52px;height:52px}.temp{font-size:16px}}
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header>
+      <div>
+        <h1>7-Day Weather Forecast</h1>
+        <div class="small">Simple HTML/CSS/JS project — works with mock data or Open-Meteo (no API key)</div>
+      </div>
+
+      <div class="controls">
+        <input id="cityInput" type="text" placeholder="Enter city (e.g. Bengaluru)" value="Bengaluru" />
+        <button id="fetchBtn">Get Forecast</button>
+        <button id="toggleBtn" class="secondary">Use Live: OFF</button>
+      </div>
+    </header>
+
+    <section class="meta">
+      <div id="location" class="small">Location: —</div>
+      <div id="updated" class="small">Updated: —</div>
+      <div id="status" style="margin-left:auto"></div>
+    </section>
+
+    <section id="cards" class="cards">
+      <!-- dynamic 7-day cards here -->
+    </section>
+
+    <div class="footer">Notes: This project includes mock data so it runs offline. Toggle "Use Live" to ON to fetch real forecasts using Open-Meteo (no key required). Geocoding is done with Nominatim (OpenStreetMap).</div>
+  </main>
+
+  <script>
+    // ====== Configuration ======
+    // If useLive = true, the app will call Nominatim + Open-Meteo to fetch a 7-day forecast (no API key).
+    // If useLive = false, the app will use mock sample data so the page works offline.
+    let useLive = false;
+
+    // Simple mapping from Open-Meteo weathercode to description + emoji
+    const weatherCodeMap = {
+      0: ['Clear','☀️'], 1:['Mainly clear','🌤️'],2:['Partly cloudy','⛅'],3:['Overcast','☁️'],
+      45:['Fog','🌫️'],48:['Depositing rime fog','🌫️'],
+      51:['Drizzle: Light','🌦️'],53:['Drizzle: Moderate','🌦️'],55:['Drizzle: Dense','🌧️'],
+      61:['Rain: Slight','🌧️'],63:['Rain: Moderate','🌧️'],65:['Rain: Heavy','⛈️'],
+      71:['Snow fall: Slight','🌨️'],73:['Snow fall: Moderate','🌨️'],75:['Snow fall: Heavy','❄️'],
+      80:['Rain showers: Slight','🌦️'],81:['Rain showers: Moderate','🌧️'],82:['Rain showers: Violent','⛈️'],
+      95:['Thunderstorm: Slight or moderate','⛈️'],96:['Thunderstorm with slight hail','⛈️'],99:['Thunderstorm with heavy hail','⛈️']
+    };
+
+    // Elements
+    const cityInput = document.getElementById('cityInput');
+    const fetchBtn = document.getElementById('fetchBtn');
+    const toggleBtn = document.getElementById('toggleBtn');
+    const cardsEl = document.getElementById('cards');
+    const locationEl = document.getElementById('location');
+    const updatedEl = document.getElementById('updated');
+    const statusEl = document.getElementById('status');
+
+    // Wire buttons
+    fetchBtn.addEventListener('click', ()=> runForecast(cityInput.value.trim() || 'Bengaluru'));
+    toggleBtn.addEventListener('click', ()=>{
+      useLive = !useLive; toggleBtn.textContent = `Use Live: ${useLive? 'ON':'OFF'}`; toggleBtn.classList.toggle('secondary', !useLive);
+    });
+
+    // Run initial
+    renderMockForecast();
+
+    async function runForecast(city){
+      setStatus('Loading...', true);
+      try{
+        if(!useLive){
+          setStatus('Using mock data (toggle on for live)', false);
+          renderMockForecast(city);
+          return;
+        }
+
+        // 1) Geocode city -> lat/lon using Nominatim (OpenStreetMap)
+        const geoUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(city)}&limit=1`;
+        const geoResp = await fetch(geoUrl, {headers:{'Accept':'application/json'}});
+        if(!geoResp.ok) throw new Error('Geocoding failed');
+        const geo = await geoResp.json();
+        if(!geo || geo.length===0) throw new Error('Location not found');
+        const lat = parseFloat(geo[0].lat); const lon = parseFloat(geo[0].lon);
+
+        // 2) Fetch 7-day forecast from Open-Meteo (no API key)
+        const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=weathercode,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=7`;
+        const wResp = await fetch(weatherUrl);
+        if(!wResp.ok) throw new Error('Weather fetch failed');
+        const wdata = await wResp.json();
+
+        // Compose days
+        const dates = wdata.daily.time; // array of dates
+        const max = wdata.daily.temperature_2m_max;
+        const min = wdata.daily.temperature_2m_min;
+        const codes = wdata.daily.weathercode;
+
+        const days = dates.map((d,i)=>({date:d, max:Math.round(max[i]), min:Math.round(min[i]), code:codes[i]}));
+        renderForecast(days, `${geo[0].display_name}`);
+        setStatus('Live data (Open-Meteo)', false);
+      }catch(err){
+        console.error(err);
+        setStatus('Error: '+err.message, false);
+        renderMockForecast(city);
+      }
+    }
+
+    function renderForecast(days, locText){
+      // days: array of {date, max, min, code}
+      cardsEl.innerHTML = '';
+      const today = new Date();
+      days.forEach((d,i)=>{
+        const card = document.createElement('div'); card.className='card';
+        const dateLabel = formatDate(d.date);
+        const [desc,emoji] = weatherCodeMap[d.code] || ['Unknown','❓'];
+        card.innerHTML = `
+          <div class="date">${dateLabel}</div>
+          <div class="icon"><div style="font-size:34px">${emoji}</div></div>
+          <div class="temp">${d.max}° / ${d.min}°</div>
+          <div class="desc">${desc}</div>
+        `;
+        cardsEl.appendChild(card);
+      });
+      locationEl.textContent = 'Location: ' + (locText || '—');
+      updatedEl.textContent = 'Updated: ' + new Date().toLocaleString();
+    }
+
+    function renderMockForecast(city='Bengaluru'){
+      const now = new Date();
+      // make 7 mock days with simple variation
+      const days = Array.from({length:7}).map((_,i)=>{
+        const d = new Date(now);
+        d.setDate(now.getDate()+i);
+        const base = 28 + (i%3) + Math.floor(Math.sin(i)*2);
+        return {date:d.toISOString().slice(0,10), max:base+2, min:base-4, code:[0,1,2,3,61,80,95][i%7]};
+      });
+      renderForecast(days, city + ' (mock)');
+      setStatus('Mock data — toggle ON to fetch live data', false);
+    }
+
+    function formatDate(iso){
+      const d = new Date(iso);
+      const opts = {weekday:'short', month:'short', day:'numeric'};
+      return d.toLocaleDateString(undefined, opts);
+    }
+
+    function setStatus(text, busy){
+      statusEl.innerHTML = busy ? `<div class="loader" title="loading"></div>` : '';
+      if(!busy){
+        const span = document.createElement('span'); span.textContent = ' ' + text; span.className='small';
+        statusEl.appendChild(span);
+      }else{
+        const span = document.createElement('span'); span.className='small'; span.textContent = ' ' + text; statusEl.appendChild(span);
+      }
+    }
+
+    // allow Enter key
+    cityInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter') fetchBtn.click(); });
+
+    // Small accessibility: prefer prefers-reduced-motion
+    if(window.matchMedia('(prefers-reduced-motion: reduce)').matches){
+      document.documentElement.style.transition='none';
+    }
+
+    // Expose runForecast for debugging in console
+    window.runForecast = runForecast;
+  </script>
+</body>
+</html>
